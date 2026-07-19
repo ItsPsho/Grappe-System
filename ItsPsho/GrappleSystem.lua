@@ -1,4 +1,4 @@
--- Connected Discord GitHub
+-- Discord username: psho | Roblox username: ItsPsho
 
 const players = game:GetService("Players")
 const userInputService = game:GetService("UserInputService")
