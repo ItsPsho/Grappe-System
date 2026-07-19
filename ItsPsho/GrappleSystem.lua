@@ -1,38 +1,40 @@
--- Discord username: psho | Roblox username: ItsPsho
+-- Connected Discord GitHub
 
-local players = game:GetService("Players")
-local userInputService = game:GetService("UserInputService")
-local runService = game:GetService("RunService")
-local tweenService = game:GetService("TweenService")
-local workspace = game:GetService("Workspace")
+const players = game:GetService("Players")
+const userInputService = game:GetService("UserInputService")
+const runService = game:GetService("RunService")
+const tweenService = game:GetService("TweenService")
+const workspace = game:GetService("Workspace")
 
-local localPlayer = players.LocalPlayer
-local camera = workspace.CurrentCamera
+const localPlayer = players.LocalPlayer
+const camera = workspace.CurrentCamera
 
-local maxGrappleDistance = 250
-local pullVelocity = 85
-local minimumReleaseDistance = 7
-local upwardBoost = 25
-local fovIncrease = 20
+const maxGrappleDistance = 500
+const pullVelocity = 220
+const minimumReleaseDistance = 7
+const upwardBoost = 25
+const fovIncrease = 20
 
--- das hier ist eine kleine spring klasse die wir brauchen damit sich die kamera weich anfühlt
--- ich benutze oop weil die reviewer darauf stehen und es super praktisch ist
-local Spring = {}
+-- this is a small spring class we need to make the camera feel smooth and dynamic
+-- oop because its super practical for this need
+const Spring = {}
 Spring.__index = Spring
 
 function Spring.new(mass: number, damping: number, stiffness: number)
 	local self = setmetatable({}, Spring)
+
 	self.target = 0
 	self.position = 0
 	self.velocity = 0
 	self.mass = mass or 1
 	self.damping = damping or 1
 	self.stiffness = stiffness or 1
+
 	return self
 end
 
 function Spring:update(deltaTime: number)
-	-- klassische hookesche gesetz mathe für die feder
+	-- classic hookes law math for the spring calculation
 	local force = (self.target - self.position) * self.stiffness
 	local dampingForce = self.velocity * self.damping
 	local acceleration = (force - dampingForce) / self.mass
@@ -43,8 +45,8 @@ function Spring:update(deltaTime: number)
 	return self.position
 end
 
--- hier fängt unser eigentliches grapple system an
-local GrappleController = {}
+-- here starts our actual grapple system
+const GrappleController = {}
 GrappleController.__index = GrappleController
 
 function GrappleController.new()
@@ -54,7 +56,7 @@ function GrappleController.new()
 	self.targetPoint = nil
 	self.grappleState = "idle"
 
-	-- wir brauchen die ganzen instances für physik und visuals
+	-- we need all these instances for physics and visuals later
 	self.ropePart = nil
 	self.linearVelocity = nil
 	self.alignOrientation = nil
@@ -83,14 +85,14 @@ function GrappleController:getCharacterStuff()
 end
 
 function GrappleController:findTarget()
-	-- checkt wo die maus gerade in der 3d welt hinzeigt
+	-- checks where the mouse is pointing right now in the 3d world
 	local mousePos = userInputService:GetMouseLocation()
 	local ray = camera:ViewportPointToRay(mousePos.X, mousePos.Y)
 
-	local rayParams = RaycastParams.new()
+	const rayParams = RaycastParams.new()
 	rayParams.FilterType = Enum.RaycastFilterType.Exclude
 
-	-- wir wollen uns nicht selbst treffen beim schießen
+	-- we dont want to hit ourselves while shooting the raycast
 	if localPlayer.Character then
 		rayParams.FilterDescendantsInstances = {localPlayer.Character}
 	end
@@ -106,8 +108,7 @@ function GrappleController:findTarget()
 end
 
 function GrappleController:createVisualRope()
-	-- statt einem standard constraint baue ich hier ein eigenes seil mit cframe
-	-- das zeigt dass ich cframe mathe verstanden habe
+	-- custom rope with cframe 
 	self.ropePart = Instance.new("Part")
 	self.ropePart.Name = "GrappleVisualRope"
 	self.ropePart.Anchored = true
@@ -119,7 +120,7 @@ function GrappleController:createVisualRope()
 end
 
 function GrappleController:setupPhysics(rootPart)
-	-- ich erstelle hier ein attachment am spieler an dem die kräfte ziehen können
+	-- i create an attachment on the player where the physical forces will pull
 	self.rootAttachment = Instance.new("Attachment")
 	self.rootAttachment.Name = "GrappleRootAttach"
 	self.rootAttachment.Parent = rootPart
@@ -151,7 +152,7 @@ function GrappleController:startGrapple()
 	self.grappleState = "pulling"
 	self.targetPoint = hitPos
 
-	-- spieler vom boden lösen damit er fliegen kann
+	-- detach player from the ground so they can actually fly towards the point
 	humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
 
 	self:createVisualRope()
@@ -159,7 +160,7 @@ function GrappleController:startGrapple()
 
 	self.fovSpring.target = fovIncrease
 
-	-- wir updaten jeden frame physik und visuals
+	-- we update physics and visuals every single frame
 	self.updateConnection = runService.RenderStepped:Connect(function(dt)
 		self:updateLoop(dt)
 	end)
@@ -177,70 +178,71 @@ function GrappleController:stopGrapple()
 		self.updateConnection = nil
 	end
 
-	-- alles aufräumen damit keine teile in der welt rumliegen oder memory leaks entstehen
+	-- clean everything up so no random parts are left in the world and to avoid memory leaks
 	if self.ropePart then self.ropePart:Destroy() end
 	if self.linearVelocity then self.linearVelocity:Destroy() end
 	if self.alignOrientation then self.alignOrientation:Destroy() end
 	if self.rootAttachment then self.rootAttachment:Destroy() end
 
-	-- wir geben dem spieler noch einen kleinen schubs nach oben beim loslassen
+	-- we give the player a tiny push upwards when releasing so it feels more fluid
 	local rootPart = self:getCharacterStuff()
 	if rootPart then
 		local currentVelocity = rootPart.AssemblyLinearVelocity
 		rootPart.AssemblyLinearVelocity = currentVelocity + Vector3.new(0, upwardBoost, 0)
 	end
 
-	-- fov wieder normal machen
-	local tween = tweenService:Create(camera, TweenInfo.new(0.5), {FieldOfView = self.baseFov})
+	-- reset the camera field of view
+	const tweenInfo = TweenInfo.new(0.5)
+	local tween = tweenService:Create(camera, tweenInfo, {FieldOfView = self.baseFov})
 	tween:Play()
 end
 
 function GrappleController:updateLoop(deltaTime)
 	local rootPart, humanoid = self:getCharacterStuff()
 
-	-- wenn der spieler plötzlich stirbt oder despawnt während wir grappeln
+	-- if the player randomly dies or despawns while grappling we need to abort
 	if not rootPart or humanoid.Health <= 0 then
 		self:stopGrapple()
 		return
 	end
 
-	local currentPos = rootPart.Position
-	local direction = self.targetPoint - currentPos
-	local distance = direction.Magnitude
+	const currentPos = rootPart.Position
+	const direction = self.targetPoint - currentPos
+	const distance = direction.Magnitude
 
-	-- wenn wir fast am ziel sind brechen wir ab sonst glitchen wir in die wand
+	-- if we are super close to the target we stop so we dont glitch into the wall
 	if distance <= minimumReleaseDistance then
 		self:stopGrapple()
 		return
 	end
 
-	local normalizedDir = direction.Unit
+	const normalizedDir = direction.Unit
 
-	-- gravitations ausgleich berechnen damit wir nicht zu stark nach unten sacken
-	local antigravityForce = Vector3.new(0, workspace.Gravity * 0.4, 0)
+	-- calculate gravity compensation so we dont drop down too fast while pulling
+	const antigravityForce = Vector3.new(0, workspace.Gravity * 0.4, 0)
 
-	-- geschwindigkeit setzen
+	-- apply the final velocity to our constraint
 	self.linearVelocity.VectorVelocity = (normalizedDir * pullVelocity) + antigravityForce
 
-	-- cframe berechnung für die orientierung des spielers
-	-- er soll in die richtung schauen in die er gezogen wird
-	local lookCFrame = CFrame.lookAt(currentPos, self.targetPoint)
+	-- cframe to make the player look in the direction they are being pulled
+	const lookCFrame = CFrame.lookAt(currentPos, self.targetPoint)
 	self.alignOrientation.CFrame = lookCFrame
 
-	-- cframe mathe um das seil genau zwischen hand und zielpunkt zu spannen
-	-- hier nehmen wir einfach mal den rootpart als startpunkt
-	local midPoint = currentPos + (normalizedDir * (distance / 2))
+	-- cframe to stretch the rope exactly between the hand and the target point
+	-- using the rootpart as the starting point for simplicity here
+	const midPoint = currentPos + (normalizedDir * (distance / 2))
 	self.ropePart.Size = Vector3.new(0.2, 0.2, distance)
 	self.ropePart.CFrame = CFrame.lookAt(midPoint, self.targetPoint)
 
-	-- kamera fov updaten für dieses schnelle geschwindigkeitsgefühl
+	-- update camera fov for that fast sense of speed
 	local fovOffset = self.fovSpring:update(deltaTime)
 	camera.FieldOfView = self.baseFov + fovOffset
 end
 
-local myGrapple = GrappleController.new()
+-- initialize our system
+const myGrapple = GrappleController.new()
 
--- input handling
+-- input handling section
 userInputService.InputBegan:Connect(function(input, gameProcessed)
 	if gameProcessed then return end
 
@@ -250,8 +252,8 @@ userInputService.InputBegan:Connect(function(input, gameProcessed)
 end)
 
 userInputService.InputEnded:Connect(function(input, gameProcessed)
+	-- this triggers when you let go of m1 and it immediately stops the grapple
 	if input.UserInputType == Enum.UserInputType.MouseButton1 then
-		-- optional falls du willst dass man gedrückt halten muss
-		-- myGrapple:stopGrapple()
+		myGrapple:stopGrapple()
 	end
 end)
