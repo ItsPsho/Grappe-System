@@ -1,4 +1,4 @@
--- Connected Discord-GitHub
+-- Discord username: psho | Roblox username: ItsPsho
 
 local players = game:GetService("Players")
 local userInputService = game:GetService("UserInputService")
