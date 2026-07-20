@@ -1,5 +1,4 @@
 -- Roblox username: ItsPsho | Discord username: psho
-
 const ReplicatedStorage = game:GetService("ReplicatedStorage")
 const players = game:GetService("Players")
 const runService = game:GetService("RunService")
