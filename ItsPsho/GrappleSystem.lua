@@ -1,12 +1,14 @@
--- Discord username: psho | Roblox username: ItsPsho
+-- Roblox username: ItsPsho | Discord username: psho
 
+const ReplicatedStorage = game:GetService("ReplicatedStorage")
 const players = game:GetService("Players")
-const userInputService = game:GetService("UserInputService")
 const runService = game:GetService("RunService")
 const tweenService = game:GetService("TweenService")
+const userInputService = game:GetService("UserInputService")
 const workspace = game:GetService("Workspace")
 
 const localPlayer = players.LocalPlayer
+
 const camera = workspace.CurrentCamera
 
 const maxGrappleDistance = 500
@@ -15,6 +17,11 @@ const minimumReleaseDistance = 7
 const upwardBoost = 25
 const fovIncrease = 20
 
+-- new constants for our expanded features
+const cooldownTime = 0.4
+const maxHoldDuration = 4
+const indicatorColor = Color3.fromRGB(150, 255, 150)
+const ropeColor = Color3.fromRGB(255, 255, 255)
 -- this is a small spring class we need to make the camera feel smooth and dynamic
 -- oop because its super practical for this need
 const Spring = {}
@@ -56,16 +63,30 @@ function GrappleController.new()
 	self.targetPoint = nil
 	self.grappleState = "idle"
 
+	-- timers to prevent spamming
+	self.lastGrappleTime = 0
+	self.grappleStartTime = 0
+
 	-- we need all these instances for physics and visuals later
 	self.ropePart = nil
 	self.linearVelocity = nil
 	self.alignOrientation = nil
 	self.rootAttachment = nil
+	self.playerTrail = nil
+	self.indicatorPart = nil
 
 	self.fovSpring = Spring.new(1, 4, 30)
 	self.baseFov = camera.FieldOfView
 
 	self.updateConnection = nil
+
+	-- create the target dot
+	self:createIndicator()
+
+	-- always run the indicator update loop
+	runService.RenderStepped:Connect(function(dt)
+		self:updateIndicator(dt)
+	end)
 
 	return self
 end
@@ -90,21 +111,36 @@ function GrappleController:findTarget()
 	local ray = camera:ViewportPointToRay(mousePos.X, mousePos.Y)
 
 	const rayParams = RaycastParams.new()
-	rayParams.FilterType = Enum.RaycastFilterType.Exclude
 
-	-- we dont want to hit ourselves while shooting the raycast
+	-- we dont want to hit ourselves nor the indicator while shooting the raycast
 	if localPlayer.Character then
-		rayParams.FilterDescendantsInstances = {localPlayer.Character}
+		rayParams.ExcludeInstances = {localPlayer.Character, self.indicatorPart}
 	end
 	rayParams.IgnoreWater = true
 
 	local result = workspace:Raycast(ray.Origin, ray.Direction * maxGrappleDistance, rayParams)
 
 	if result then
-		return result.Position, result.Instance
+		-- returning the normal too so we know which way the surface is facing
+		return result.Position, result.Instance, result.Normal
 	end
 
-	return nil, nil
+	return nil, nil, nil
+end
+
+function GrappleController:createIndicator()
+	-- a simple sphere that shows where the grapple will attach
+	self.indicatorPart = Instance.new("Part")
+	self.indicatorPart.Name = "GrappleIndicator"
+	self.indicatorPart.Shape = Enum.PartType.Ball
+	self.indicatorPart.Size = Vector3.new(1.2, 1.2, 1.2)
+	self.indicatorPart.Material = Enum.Material.Neon
+	self.indicatorPart.Color = indicatorColor
+	self.indicatorPart.Anchored = true
+	self.indicatorPart.CanCollide = false
+	self.indicatorPart.CastShadow = false
+	self.indicatorPart.Transparency = 1
+	self.indicatorPart.Parent = workspace
 end
 
 function GrappleController:createVisualRope()
@@ -114,13 +150,24 @@ function GrappleController:createVisualRope()
 	self.ropePart.Anchored = true
 	self.ropePart.CanCollide = false
 	self.ropePart.Material = Enum.Material.Neon
-	self.ropePart.Color = Color3.fromRGB(255, 255, 255)
+	self.ropePart.Color = ropeColor
 	self.ropePart.Size = Vector3.new(0.15, 0.15, 1)
 	self.ropePart.Parent = workspace
 end
 
+function GrappleController:spawnImpactVisuals(position, normal)
+	-- spawn vfx where the hook hits the wall
+	const currentVFX = workspace:FindFirstChild("GrappleVFX")
+	const attachment = currentVFX.Attachment
+	const particleEmitter = attachment.ParticleEmitter
+	-- point the particles away from the wall
+	attachment.CFrame = CFrame.lookAt(position, position + normal)
+	currentVFX.Parent = workspace
+	particleEmitter:Emit(particleEmitter:GetAttribute("EmitCount"))
+end
+
 function GrappleController:setupPhysics(rootPart)
-	-- i create an attachment on the player where the physical forces will pull
+	-- create an attachment on the player where the physical forces will pull
 	self.rootAttachment = Instance.new("Attachment")
 	self.rootAttachment.Name = "GrappleRootAttach"
 	self.rootAttachment.Parent = rootPart
@@ -143,14 +190,21 @@ end
 function GrappleController:startGrapple()
 	if self.grappleState ~= "idle" then return end
 
+	-- check if the cooldown is over so they cant spam it
+	if tick() - self.lastGrappleTime < cooldownTime then return end
+
 	local rootPart, humanoid = self:getCharacterStuff()
 	if not rootPart then return end
 
-	local hitPos, hitInst = self:findTarget()
+	local hitPos, hitInst, hitNormal = self:findTarget()
 	if not hitPos then return end
 
 	self.grappleState = "pulling"
 	self.targetPoint = hitPos
+	self.grappleStartTime = tick()
+
+	-- spawn the hit particles at the target
+	self:spawnImpactVisuals(hitPos, hitNormal)
 
 	-- detach player from the ground so they can actually fly towards the point
 	humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
@@ -160,7 +214,7 @@ function GrappleController:startGrapple()
 
 	self.fovSpring.target = fovIncrease
 
-	-- we update physics and visuals every single frame
+	-- update physics and visuals every single frame
 	self.updateConnection = runService.RenderStepped:Connect(function(dt)
 		self:updateLoop(dt)
 	end)
@@ -173,18 +227,22 @@ function GrappleController:stopGrapple()
 	self.targetPoint = nil
 	self.fovSpring.target = 0
 
+	-- record the time we stopped for the cooldown later
+	self.lastGrappleTime = tick()
+
 	if self.updateConnection then
 		self.updateConnection:Disconnect()
 		self.updateConnection = nil
 	end
 
-	-- clean everything up so no random parts are left in the world and to avoid memory leaks
+	-- clean everything up so no random parts to avoid memory leaks
 	if self.ropePart then self.ropePart:Destroy() end
 	if self.linearVelocity then self.linearVelocity:Destroy() end
 	if self.alignOrientation then self.alignOrientation:Destroy() end
+	
 	if self.rootAttachment then self.rootAttachment:Destroy() end
-
-	-- we give the player a tiny push upwards when releasing so it feels more fluid
+	
+	-- we give the player a tiny push upwards when releasing
 	local rootPart = self:getCharacterStuff()
 	if rootPart then
 		local currentVelocity = rootPart.AssemblyLinearVelocity
@@ -197,11 +255,43 @@ function GrappleController:stopGrapple()
 	tween:Play()
 end
 
+function GrappleController:updateIndicator(deltaTime)
+	-- only show the indicator if we are not currently grappling
+	if self.grappleState ~= "idle" then
+		self.indicatorPart.Transparency = 1
+		return
+	end
+
+	const hitPos, hitInst, hitNormal = self:findTarget()
+
+	if hitPos then
+		-- place the indicator slightly off the wall so it doesnt z-fight
+		self.indicatorPart.Position = hitPos + (hitNormal * 0.1)
+
+		-- fade out slightly if it's on cooldown
+		if tick() - self.lastGrappleTime < cooldownTime then
+			self.indicatorPart.Transparency = 0.8
+			self.indicatorPart.Color = Color3.fromRGB(255, 100, 100) -- red when on cooldown
+		else
+			self.indicatorPart.Transparency = 0.4
+			self.indicatorPart.Color = indicatorColor
+		end
+	else
+		self.indicatorPart.Transparency = 1
+	end
+end
+
 function GrappleController:updateLoop(deltaTime)
 	local rootPart, humanoid = self:getCharacterStuff()
 
 	-- if the player randomly dies or despawns while grappling we need to abort
 	if not rootPart or humanoid.Health <= 0 then
+		self:stopGrapple()
+		return
+	end
+
+	-- check if they have been holding the grapple for too long
+	if tick() - self.grappleStartTime >= maxHoldDuration then
 		self:stopGrapple()
 		return
 	end
@@ -218,10 +308,10 @@ function GrappleController:updateLoop(deltaTime)
 
 	const normalizedDir = direction.Unit
 
-	-- calculate gravity compensation so we dont drop down too fast while pulling
+	-- calculate gravity compensation
 	const antigravityForce = Vector3.new(0, workspace.Gravity * 0.4, 0)
 
-	-- apply the final velocity to our constraint
+	-- apply the velocity to our constraint
 	self.linearVelocity.VectorVelocity = (normalizedDir * pullVelocity) + antigravityForce
 
 	-- cframe to make the player look in the direction they are being pulled
@@ -231,10 +321,13 @@ function GrappleController:updateLoop(deltaTime)
 	-- cframe to stretch the rope exactly between the hand and the target point
 	-- using the rootpart as the starting point for simplicity here
 	const midPoint = currentPos + (normalizedDir * (distance / 2))
-	self.ropePart.Size = Vector3.new(0.2, 0.2, distance)
+
+	-- make the rope slightly thinner the further away we are for
+	const ropeThickness = math.clamp(0.4 - (distance / maxGrappleDistance) * 0.2, 0.1, 0.4)
+	self.ropePart.Size = Vector3.new(ropeThickness, ropeThickness, distance)
 	self.ropePart.CFrame = CFrame.lookAt(midPoint, self.targetPoint)
 
-	-- update camera fov for that fast sense of speed
+	-- update camera fov
 	local fovOffset = self.fovSpring:update(deltaTime)
 	camera.FieldOfView = self.baseFov + fovOffset
 end
